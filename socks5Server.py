@@ -96,7 +96,7 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 						addr = socket.inet_ntoa(data[4:8])
 						port = struct.unpack('>H', data[8:10])
 					elif addrtype == 3:     # Domain name
-						addr = socket.inet_ntoa(data[5:(5+ord(data[4]))])
+						addr = data[5:(5+ord(data[4]))]
 						port = struct.unpack('>H', data[(5+ord(data[4])):(7+ord(data[4]))])
 					reply = b"\x05\x00\x00\x01"
 					try:
