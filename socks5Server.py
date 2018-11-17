@@ -70,6 +70,10 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 		try:
 			#print 'socks connection from ', self.client_address
 			sock = self.connection
+			#Recive the HTTH header and then drop it
+			buf = self.recvHTTPHeader(sock)
+			if not buf:
+				raise DataError('HTTP header data error, Zero buf')
 			# 1. Version
 			buf = self.recvDataBlock(sock)
 			if not buf:
@@ -122,6 +126,21 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 		except DataError as e:
 			print e
 
+	def recvHTTPHeader (self, socket):
+		header = ''
+		data = ''
+		i = 0
+		while 1:
+			data = socket.recv(1)
+			if not data:
+				break
+			else:
+				i = i + 1
+				header = header + data
+				if i > 3 and data == '\n' and header[i-2] == '\r' and header[i-3] == '\n':
+					break
+		return i
+
 #+--+----+--------------+----+
 #|LN|XXXX|     DATA     |1000|
 #+--+----+--------------+----+
@@ -158,5 +177,6 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 def main():
 	server = ThreadingTCPServer(('0.0.0.0', 9880), Socks5Server)
 	server.serve_forever()
+
 if __name__ == '__main__':
 	main()
