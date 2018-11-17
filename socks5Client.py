@@ -3,9 +3,14 @@
 
 import socket, sys, select, SocketServer, struct, time, zlib, itertools
 
-SERVERIP = "11.22.33.44"
-SERVERPOT = 9880
+SERVERIP = "1.2.3.4"
+SERVERPOT = 8888
 KEY = "yourkey"
+HTTPHeader = '''GET / HTTP/1.1\r
+Host: www.baidu.com\r
+User-Agent: Mozilla/5.0 (Windows NT 6.1; rv:19.0) Gecko/20100101 Firefox/19.0\r
+Accept: text/html\r
+Connection: keep-alive\r\n\r\n'''
 
 class dataEcoder:
 	def __init__(self, k):
@@ -82,6 +87,8 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			# 3. Transfering
 			if reply[1] == '\x00':  # Success
 				#if mode == 1:    # 1. Tcp connect
+				#To avoid data blocked by GFW, we should send a HTTP header befor the real data
+				remote.sendall(HTTPHeader)
 				self.handle_tcp(sock, remote)
 		except socket.error:
 			print 'socket error'
@@ -120,8 +127,8 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 		return data		
 
 def main():
-	print "Listening on 8885..."
-	server = ThreadingTCPServer(('', 8885), Socks5Server)
+	print "Listening on 1515..."
+	server = ThreadingTCPServer(('', 1515), Socks5Server)
 	server.serve_forever()
 if __name__ == '__main__':
 	main()
