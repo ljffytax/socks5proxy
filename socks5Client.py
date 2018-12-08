@@ -2,10 +2,13 @@
 #coding:utf-8
 
 import socket, sys, select, SocketServer, struct, time, zlib, itertools
+import os, signal, threading, time
 
 SERVERIP = "1.2.3.4"
 SERVERPOT = 8888
 KEY = "yourkey"
+QUITED = 0
+SVR = None
 HTTPHeader = '''GET / HTTP/1.1\r
 Host: www.baidu.com\r
 User-Agent: Mozilla/5.0 (Windows NT 6.1; rv:19.0) Gecko/20100101 Firefox/19.0\r
@@ -126,9 +129,31 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 		data = data[:len(data)-4]
 		return data		
 
+def quit(signum, frame):
+	print "Got quit signal...\n"
+	global QUITED 
+	QUITED = 1
+
+def quitThread ():
+	global QUITED
+	while True:
+		if QUITED:
+			SVR.shutdown()
+			break
+		time.sleep(1)
+
 def main():
 	print "Listening on 1515..."
+	global SVR
+	signal.signal(signal.SIGINT, quit)
+	signal.signal(signal.SIGTERM, quit)
 	server = ThreadingTCPServer(('', 1515), Socks5Server)
+	server.daemon_threads = True
+	SVR = server
+	q = threading.Thread (target = quitThread)
+	q.start()
 	server.serve_forever()
+	server.server_close()
+
 if __name__ == '__main__':
 	main()
