@@ -2,7 +2,10 @@
 #coding:utf-8
 
 import socket, sys, select, SocketServer, struct, time, zlib, itertools
+import os, signal, threading
 KEY = 'yourkey'
+SVR = None
+QUITED = 0
 
 class dataEcoder:
 	def __init__(self, k):
@@ -44,7 +47,7 @@ class DataError(Exception):
 class ThreadingTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer): pass
 class Socks5Server(SocketServer.StreamRequestHandler):
 	coder = dataEcoder(KEY)
-
+	timeout = 10
 	def handle_tcp(self, sock, remote):
 		fdset = [sock, remote]
 		while True:
@@ -74,12 +77,10 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			buf = self.recvHTTPHeader(sock)
 			if not buf:
 				raise DataError('HTTP header data error, Zero buf')
-			# 1. Version
 			buf = self.recvDataBlock(sock)
 			if not buf:
 				raise DataError('data error, Zero buf')
 			data = self.coder.decode(buf)
-			#data = sock.recv(2) # Why 262 ?
 			if b'\x05' == data[0]:  #socks5
 				nmethods = ord(data[1])
 				if len(data) != nmethods + 2:
@@ -130,8 +131,18 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 		header = ''
 		data = ''
 		i = 0
+		n = 0
 		while 1:
-			data = socket.recv(1)
+			while n < 3:
+				try:
+					data = socket.recv(1)
+					break
+				except Exception as e:
+					err = e.args[0]
+					if err == 'timed out':
+						n = n + 1
+					else:
+						break
 			if not data:
 				break
 			else:
@@ -146,7 +157,17 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 #+--+----+--------------+----+
 	def recvDataBlock (self, socket):
 		data = ''
-		head = socket.recv(6)
+		i = 0
+		while i < 3:
+			try:
+				head = socket.recv(6)
+				break
+			except Exception as e:
+				err = e.args[0]
+				if err == 'timed out':
+					i = i + 1
+				else:
+					break
 		if not head:
 			return None
 		if len(head) < 6:
@@ -155,14 +176,11 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 		flag = head[:2]
 		l = 0
 		k = 0
-		#logger.debug ("Flag:", head)
 		if flag == 'LN':
 			l = int(head[2:])
 			k = l
 		else:
-		#	logger.error ("Bad data Block!!!")
 			return None
-		#logger.debug ("len is %d", l)
 		while 1:
 			t = socket.recv(l+4)
 			if not t:
@@ -174,9 +192,30 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 		data = data[:len(data)-4]
 		return data		
 
+def quit(signum, frame):
+	print "\nGot quit signal...\n"
+	global QUITED 
+	QUITED = 1
+
+def quitThread ():
+	global QUITED
+	while True:
+		if QUITED:
+			SVR.shutdown()
+			break
+		time.sleep(1)
+
 def main():
+	global SVR
+	signal.signal(signal.SIGINT, quit)
+	signal.signal(signal.SIGTERM, quit)
 	server = ThreadingTCPServer(('0.0.0.0', 9880), Socks5Server)
+	server.daemon_threads = True
+	SVR = server
+	q = threading.Thread (target = quitThread)
+	q.start()
 	server.serve_forever()
+	server.server_close()
 
 if __name__ == '__main__':
 	main()
