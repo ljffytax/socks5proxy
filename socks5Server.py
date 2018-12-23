@@ -2,7 +2,9 @@
 #coding:utf-8
 
 import socket, sys, select, SocketServer, struct, time, zlib, itertools
-import os, signal, threading
+import os, signal, threading, atexit
+from signal import SIGTERM
+
 KEY = 'yourkey'
 SVR = None
 QUITED = 0
@@ -21,8 +23,8 @@ class dataEcoder:
 		l = len(xdata)
 		if l>9999:
 			return None
-		n = '%04d' %l
-		return 'LN' + n + xdata + '1000'
+		n = struct.pack('>H', l)
+		return 'LN' + n + xdata + '00'
 
 	def unzipXorData(self, data):
 		xdata = self.xor(data, self.KEY)
@@ -152,15 +154,15 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 					break
 		return i
 
-#+--+----+--------------+----+
-#|LN|XXXX|     DATA     |1000|
-#+--+----+--------------+----+
+#+--+--+--------------+--+
+#|LN|XX|     DATA     |00|
+#+--+--+--------------+--+
 	def recvDataBlock (self, socket):
 		data = ''
 		i = 0
 		while i < 3:
 			try:
-				head = socket.recv(6)
+				head = socket.recv(4)
 				break
 			except Exception as e:
 				err = e.args[0]
@@ -170,27 +172,132 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 					break
 		if not head:
 			return None
-		if len(head) < 6:
-			t= socket.recv(6-len(head))
+		if len(head) < 4:
+			t= socket.recv(4-len(head))
 			head = head+t
 		flag = head[:2]
 		l = 0
 		k = 0
 		if flag == 'LN':
-			l = int(head[2:])
+			l = struct.unpack('>H',head[2:])
+			l = l[0]
 			k = l
 		else:
 			return None
 		while 1:
-			t = socket.recv(l+4)
+			t = socket.recv(l+2)
 			if not t:
 				return None
 			data = data + t
-			if len(data) >= k+4:
+			if len(data) >= k+2:
 				break
 			l = l-len(t)
-		data = data[:len(data)-4]
+		if data[len(data)-2:] == "00":
+			data = data[:len(data)-2]
+		else:
+			data = None
 		return data		
+
+def daemonize(pidfile):
+	"""
+	do the UNIX double-fork magic, see Stevens' "Advanced 
+	Programming in the UNIX Environment" for details (ISBN 0201563177)
+	http://www.erlenstar.demon.co.uk/unix/faq_2.html#SEC16
+	"""
+	stdin='/dev/null'
+	stdout='/dev/null'
+	stderr='/dev/null'
+	try: 
+		pid = os.fork() 
+		if pid > 0:
+			# exit first parent
+			sys.exit(0) 
+	except OSError, e: 
+		sys.stderr.write("fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
+		sys.exit(1)
+
+	# decouple from parent environment
+	os.chdir("/") 
+	os.setsid() 
+	os.umask(0) 
+
+	# do second fork
+	try: 
+		pid = os.fork() 
+		if pid > 0:
+			# exit from second parent
+			sys.exit(0) 
+	except OSError, e: 
+		sys.stderr.write("fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
+		sys.exit(1) 
+
+	# redirect standard file descriptors
+	sys.stdout.flush()
+	sys.stderr.flush()
+	si = file(stdin, 'r')
+	so = file(stdout, 'a+')
+	se = file(stderr, 'a+', 0)
+	os.dup2(si.fileno(), sys.stdin.fileno())
+	os.dup2(so.fileno(), sys.stdout.fileno())
+	os.dup2(se.fileno(), sys.stderr.fileno())
+
+	# write pidfile
+	atexit.register(delpid,pidfile,)
+	pid = str(os.getpid())
+	file(pidfile,'w+').write("%s\n" % pid)
+
+def delpid(pidfile):
+	os.remove(pidfile)
+	
+def startServerDeamo(pidfile):
+	"""
+	Start the daemon
+	"""
+	# Check for a pidfile to see if the daemon already runs
+	try:
+		pf = file(pidfile,'r')
+		pid = int(pf.read().strip())
+		pf.close()
+	except IOError:
+		pid = None
+	if pid:
+		message = "pidfile %s already exist. Daemon already running?\n"
+		sys.stderr.write(message % pidfile)
+		sys.exit(1)
+	# Start the daemon
+	daemonize(pidfile)
+	serverStart()
+
+def stopServerDeamo(pidfile):
+	"""
+	Stop the daemon
+	"""
+	# Get the pid from the pidfile
+	try:
+		pf = file(pidfile,'r')
+		pid = int(pf.read().strip())
+		pf.close()
+	except IOError:
+		pid = None
+
+	if not pid:
+		message = "pidfile %s does not exist. Daemon not running?\n"
+		sys.stderr.write(message % pidfile)
+		return 
+
+	# Try killing the daemon process
+	try:
+		while 1:
+			os.kill(pid, SIGTERM)
+			time.sleep(2)
+	except OSError, err:
+		err = str(err)
+		if err.find("No such process") > 0:
+			if os.path.exists(pidfile):
+				os.remove(pidfile)
+		else:
+			print str(err)
+			sys.exit(1)
 
 def quit(signum, frame):
 	print "\nGot quit signal...\n"
@@ -205,7 +312,7 @@ def quitThread ():
 			break
 		time.sleep(1)
 
-def main():
+def serverStart():
 	global SVR
 	signal.signal(signal.SIGINT, quit)
 	signal.signal(signal.SIGTERM, quit)
@@ -217,5 +324,19 @@ def main():
 	server.serve_forever()
 	server.server_close()
 
-if __name__ == '__main__':
-	main()
+if __name__ == "__main__":
+	pidf = "/var/run/socks5Server.pid"
+	if len(sys.argv) >= 2:
+		if 'start' == sys.argv[1]:
+			startServerDeamo(pidf)
+		elif 'stop' == sys.argv[1]:
+			stopServerDeamo(pidf)
+		elif 'restart' == sys.argv[1]:
+			print "You should run stop and then run start..."
+		else:
+			print "Unknown command"
+			sys.exit(2)
+		sys.exit(0)
+	else:
+		print "usage: %s start|stop|restart" % sys.argv[0]
+		sys.exit(2)
