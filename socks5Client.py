@@ -2,7 +2,8 @@
 #coding:utf-8
 
 import socket, sys, select, SocketServer, struct, time, zlib, itertools
-import os, signal, threading, time
+import os, signal, threading
+import time
 
 SERVERIP = "1.2.3.4"
 SERVERPOT = 8888
@@ -29,8 +30,8 @@ class dataEcoder:
 		l = len(xdata)
 		if l>9999:
 			return None
-		n = '%04d' %l
-		return 'LN' + n + xdata + '1000'
+		n = struct.pack ('>H', l)
+		return 'LN' + n + xdata + '00'
 
 	def unzipXorData(self, data):
 		xdata = self.xor(data, self.KEY)
@@ -93,44 +94,48 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 				#To avoid data blocked by GFW, we should send a HTTP header befor the real data
 				remote.sendall(HTTPHeader)
 				self.handle_tcp(sock, remote)
-		except socket.error:
-			print 'socket error'
+		except socket.error as e :
+			print e
 
-#+--+----+--------------+----+
-#|LN|XXXX|     DATA     |1000|
-#+--+----+--------------+----+
+#+--+--+--------------+--+
+#|LN|XX|     DATA     |00|
+#+--+--+--------------+--+
 	def recvDataBlock (self, socket):
 		data = ''
-		head = socket.recv(6)
+		head = socket.recv(4)
 		if not head:
 			return None
-		if len(head) < 6:
-			t= socket.recv(6-len(head))
+		if len(head) < 4:
+			t= socket.recv(4-len(head))
 			head = head+t
 		flag = head[:2]
 		l = 0
 		k = 0
 		#logger.debug ("Flag:", head)
 		if flag == 'LN':
-			l = int(head[2:])
+			l = struct.unpack('>H', head[2:])
+			l = l[0]
 			k = l
 		else:
 		#	logger.error ("Bad data Block!!!")
 			return None
 		#logger.debug ("len is %d", l)
 		while 1:
-			t = socket.recv(l+4)
+			t = socket.recv(l+2)
 			if not t:
 				return None
 			data = data + t
-			if len(data) >= k+4:
+			if len(data) >= k+2:
 				break
 			l = l-len(t)
-		data = data[:len(data)-4]
+		if data[len(data)-2:] == "00":
+			data = data[:len(data)-2]
+		else:
+			data = None
 		return data		
 
 def quit(signum, frame):
-	print "Got quit signal...\n"
+	print "\nGot quit signal...\n"
 	global QUITED 
 	QUITED = 1
 
