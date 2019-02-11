@@ -147,7 +147,19 @@ def quitThread ():
 			break
 		time.sleep(1)
 
+def isPortUsing(ip, port):
+	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	try:
+		s.connect((ip, int(port)))
+		s.shutdown(2)
+		return True
+	except Exception, e:
+		return False
+
 def main():
+	if isPortUsing('127.0.0.1', 1515):
+		print "Start proxy failed, port 1515 is using, try again later..."
+		return
 	print "Listening on 1515..."
 	global SVR
 	signal.signal(signal.SIGINT, quit)
