@@ -3,11 +3,25 @@
 
 import socket, sys, select, SocketServer, struct, time, zlib, itertools
 import os, signal, threading, atexit
+import logging
 from signal import SIGTERM
 
 KEY = 'yourkey'
 SVR = None
 QUITED = 0
+
+logger = logging.getLogger("rootloger")
+LOG_FILE = "/var/log/SocketServer.log"
+
+def init_loger():
+	logger.setLevel(logging.INFO)
+	handler = logging.FileHandler(LOG_FILE)
+	handler.setLevel(logging.INFO)
+	#formatter = logging.Formatter('%(asctime)s-%(levelname)s-%(message)s')
+	formatter = logging.Formatter("%(asctime)s;%(levelname)s;%(message)s",
+									"%Y-%m-%d %H:%M:%S")
+	handler.setFormatter(formatter)
+	logger.addHandler(handler)
 
 class dataEcoder:
 	def __init__(self, k):
@@ -69,7 +83,7 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 				try:
 					sock.sendall(self.coder.encode(buf))
 				except socket.error as e:
-					print e
+					logger.error("%s", e)
 					break
 	def handle(self):
 		try:
@@ -93,10 +107,10 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 					# 2. Request
 					buf = self.recvDataBlock(sock)
 					if not buf:
-						raise DataError('data error1')
+						raise DataError('data error, not enough data')
 					data = self.coder.decode(buf)
 					if len(data) < 4:
-						raise DataError('data error')
+						raise DataError('data error, bad data block')
 					mode = ord(data[1])
 					addrtype = ord(data[3])
 					if addrtype == 1:       # IPv4
@@ -116,7 +130,7 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 						local = remote.getsockname()
 						reply += socket.inet_aton(local[0]) + struct.pack(">H", local[1])
 					except socket.error as e:
-						print "Connect to web server error", e
+						logger.error("Connect to web server error: %s", e)
 						# Connection refused
 						reply = '\x05\x05\x00\x01\x00\x00\x00\x00\x00\x00'
 					sock.sendall(self.coder.encode(reply))
@@ -124,10 +138,10 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 					if reply[1] == '\x00':  # Success
 						if mode == 1:    # 1. Tcp connect
 							self.handle_tcp(sock, remote)
-		except socket.error:
-			print 'socket error'
+		except socket.error as e:
+			logger.error("%s", e)
 		except DataError as e:
-			print e
+			logger.error("%s", e)
 
 	def recvHTTPHeader (self, socket):
 		header = ''
@@ -212,7 +226,8 @@ def daemonize(pidfile):
 		if pid > 0:
 			# exit first parent
 			sys.exit(0) 
-	except OSError, e: 
+	except OSError, e:
+		logger.critical("fork #1 failed: %s",e) 
 		sys.stderr.write("fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
 		sys.exit(1)
 
@@ -228,6 +243,7 @@ def daemonize(pidfile):
 			# exit from second parent
 			sys.exit(0) 
 	except OSError, e: 
+		logger.critical("fork #2 failed: %s",e) 
 		sys.stderr.write("fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
 		sys.exit(1) 
 
@@ -262,6 +278,7 @@ def startServerDeamo(pidfile):
 		pid = None
 	if pid:
 		message = "pidfile %s already exist. Daemon already running?\n"
+		logger.error("pidfile is already exist")
 		sys.stderr.write(message % pidfile)
 		sys.exit(1)
 	# Start the daemon
@@ -282,6 +299,7 @@ def stopServerDeamo(pidfile):
 
 	if not pid:
 		message = "pidfile %s does not exist. Daemon not running?\n"
+		logger.error("pidfile does not exist")
 		sys.stderr.write(message % pidfile)
 		return 
 
@@ -296,11 +314,11 @@ def stopServerDeamo(pidfile):
 			if os.path.exists(pidfile):
 				os.remove(pidfile)
 		else:
-			print str(err)
+			logger.error("%s", str(err))
 			sys.exit(1)
 
 def quit(signum, frame):
-	print "\nGot quit signal...\n"
+	logger.info("Got quit signal\n")
 	global QUITED 
 	QUITED = 1
 
@@ -326,14 +344,18 @@ def serverStart():
 
 if __name__ == "__main__":
 	pidf = "/var/run/socks5Server.pid"
+	init_loger()
 	if len(sys.argv) >= 2:
 		if 'start' == sys.argv[1]:
+			logger.info("server start: %s", sys.argv[1])
 			startServerDeamo(pidf)
 		elif 'stop' == sys.argv[1]:
 			stopServerDeamo(pidf)
 		elif 'restart' == sys.argv[1]:
+			logger.error("bad args: %s", sys.argv[1])
 			print "You should run stop and then run start..."
 		else:
+			logger.error("Unknown command: %s", sys.argv[1])
 			print "Unknown command"
 			sys.exit(2)
 		sys.exit(0)
